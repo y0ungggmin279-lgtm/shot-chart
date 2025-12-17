@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>농구 슛차트 생성기</title>
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+        h1 { text-align: center; }
+        .container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        
+        /* 입력 폼 스타일 */
+        .input-group { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .input-group label { flex: 2; font-weight: bold; }
+        .input-wrapper { flex: 1; display: flex; gap: 5px; align-items: center; }
+        input[type="number"] { width: 50px; padding: 5px; text-align: center; }
+        
+        /* 버튼 스타일 */
+        .btn { display: block; width: 100%; padding: 15px; background-color: #ff6b00; color: white; border: none; font-size: 1.2rem; font-weight: bold; cursor: pointer; margin-top: 20px; border-radius: 5px; }
+        .btn:hover { background-color: #e65c00; }
+        
+        /* 캔버스 (슛차트) */
+        #chart-container { position: relative; width: 100%; margin-top: 30px; text-align: center; }
+        canvas { background-color: #fff; border: 2px solid #333; max-width: 100%; }
+        
+        /* 결과 테이블 */
+        .stats-table { width: 100%; margin-top: 20px; border-collapse: collapse; text-align: center; }
+        .stats-table th, .stats-table td { border: 1px solid #ddd; padding: 8px; }
+        .stats-table th { background-color: #333; color: white; }
+        
+        .loading { display: none; text-align: center; color: blue; font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🏀 농구 슛차트 입력</h1>
+    
+    <div id="input-forms">
+        </div>
+
+    <button class="btn" onclick="generateChartAndSave()">슛 차트 만들기 & 저장</button>
+    <div id="loading" class="loading">데이터 저장 중... 잠시만 기다려주세요.</div>
+
+    <div id="result-area" style="display:none;">
+        <h3>📊 분석 결과</h3>
+        
+        <table class="stats-table">
+            <thead>
+                <tr>
+                    <th>FG% (야투율)</th>
+                    <th>3P% (3점슛)</th>
+                    <th>eFG% (효율성)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td id="res-fg">0%</td>
+                    <td id="res-3p">0%</td>
+                    <td id="res-efg">0%</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div id="chart-container">
+            <canvas id="shotChart" width="500" height="470"></canvas>
+            <p><small>* 초록: 리그 대비 +10% 이상 | 노랑: 비슷 | 빨강: -10% 이하</small></p>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ---------------------------------------------------------
+    // 1. 설정: 구글 앱스 스크립트 URL (배포 후 여기에 복사해넣으세요)
+    // ---------------------------------------------------------
+    const SCRIPT_URL = "여기에_구글_웹앱_URL을_붙여넣으세요"; 
+
+    // ---------------------------------------------------------
+    // 2. 데이터 정의 (구역 정보 및 NBA 평균 예시)
+    // 좌표(x,y)는 500x470 캔버스 기준 (골대는 대략 x=250, y=415)
+    // ---------------------------------------------------------
+    const ZONES = [
+        { key: "ra", name: "제한구역 (Restricted)", nba: 65, x: 250, y: 420, is3p: false },
+        { key: "paint_l", name: "좌측 페인트", nba: 42, x: 170, y: 400, is3p: false },
+        { key: "paint_c", name: "중앙 페인트", nba: 42, x: 250, y: 350, is3p: false },
+        { key: "paint_r", name: "우측 페인트", nba: 42, x: 330, y: 400, is3p: false },
+        { key: "short_l", name: "좌측 숏 코너", nba: 40, x: 80, y: 400, is3p: false },
+        { key: "short_r", name: "우측 숏 코너", nba: 40, x: 420, y: 400, is3p: false },
+        { key: "mid_l", name: "좌측 미드레인지", nba: 40, x: 100, y: 280, is3p: false },
+        { key: "mid_c", name: "중앙 미드레인지", nba: 40, x: 250, y: 250, is3p: false },
+        { key: "mid_r", name: "우측 미드레인지", nba: 40, x: 400, y: 280, is3p: false },
+        { key: "c3_l", name: "좌측 코너 3점", nba: 38, x: 30, y: 420, is3p: true },
+        { key: "c3_r", name: "우측 코너 3점", nba: 38, x: 470, y: 420, is3p: true },
+        { key: "w3_l", name: "좌측 윙 3점", nba: 36, x: 70, y: 150, is3p: true },
+        { key: "top3", name: "중앙 3점", nba: 35, x: 250, y: 100, is3p: true },
+        { key: "w3_r", name: "우측 윙 3점", nba: 36, x: 430, y: 150, is3p: true }
+    ];
+
+    // ---------------------------------------------------------
+    // 3. 초기화: 입력 폼 생성
+    // ---------------------------------------------------------
+    const formContainer = document.getElementById("input-forms");
+    ZONES.forEach(zone => {
+        const div = document.createElement("div");
+        div.className = "input-group";
+        div.innerHTML = `
+            <label>${zone.name}</label>
+            <div class="input-wrapper">
+                성공: <input type="number" id="${zone.key}_m" value="0" min="0">
+                시도: <input type="number" id="${zone.key}_a" value="0" min="0">
+            </div>
+        `;
+        formContainer.appendChild(div);
+    });
+
+    // ---------------------------------------------------------
+    // 4. 메인 로직: 차트 생성 및 저장
+    // ---------------------------------------------------------
+    function generateChartAndSave() {
+        const resultArea = document.getElementById("result-area");
+        const loading = document.getElementById("loading");
+        
+        // 1. 데이터 수집 및 계산
+        let totalM = 0, totalA = 0;
+        let total3M = 0, total3A = 0;
+        let payload = {}; // 구글 시트로 보낼 데이터 객체
+
+        ZONES.forEach(z => {
+            const m = parseInt(document.getElementById(z.key + "_m").value) || 0;
+            const a = parseInt(document.getElementById(z.key + "_a").value) || 0;
+            
+            totalM += m;
+            totalA += a;
+            if(z.is3p) { total3M += m; total3A += a; }
+
+            // payload에 구역별 데이터 저장
+            payload[z.key + "_m"] = m;
+            payload[z.key + "_a"] = a;
+            
+            // 시각화용 데이터 임시 저장
+            z.userM = m;
+            z.userA = a;
+            z.userPct = a > 0 ? (m / a) * 100 : 0;
+        });
+
+        const fgPct = totalA > 0 ? (totalM / totalA) * 100 : 0;
+        const p3Pct = total3A > 0 ? (total3M / total3A) * 100 : 0;
+        const efgPct = totalA > 0 ? ((totalM + 0.5 * total3M) / totalA) * 100 : 0;
+
+        // payload에 종합 데이터 추가
+        payload.total_fgm = totalM;
+        payload.total_fga = totalA;
+        payload.total_fg_pct = fgPct.toFixed(1) + "%";
+        payload.total_3pm = total3M;
+        payload.total_3pa = total3A;
+        payload.efg_pct = efgPct.toFixed(1) + "%";
+
+        // 2. 결과 화면 표시
+        document.getElementById("res-fg").innerText = `${totalM}/${totalA} (${fgPct.toFixed(1)}%)`;
+        document.getElementById("res-3p").innerText = `${total3M}/${total3A} (${p3Pct.toFixed(1)}%)`;
+        document.getElementById("res-efg").innerText = `${efgPct.toFixed(1)}%`;
+        
+        resultArea.style.display = "block";
+        
+        // 3. 차트 그리기
+        drawShotChart();
+
+        // 4. 구글 시트로 전송 (비동기)
+        if(SCRIPT_URL.includes("웹 앱 URL")) {
+            alert("스크립트 코드 내 SCRIPT_URL 변수에 구글 앱스 스크립트 URL을 넣어주세요!");
+            return;
+        }
+
+        loading.style.display = "block";
+        fetch(SCRIPT_URL, {
+            method: "POST",
+            mode: "no-cors", // 구글 스크립트 CORS 정책상 no-cors 사용 (응답 내용 확인 불가하지만 전송은 됨)
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }).then(() => {
+            loading.style.display = "none";
+            alert("데이터가 성공적으로 구글 시트에 저장되었습니다!");
+        }).catch(err => {
+            loading.style.display = "none";
+            alert("저장 실패: " + err);
+        });
+    }
+
+    // ---------------------------------------------------------
+    // 5. 캔버스 드로잉 로직 (코트 및 슛 데이터)
+    // ---------------------------------------------------------
+    function drawShotChart() {
+        const canvas = document.getElementById("shotChart");
+        const ctx = canvas.getContext("2d");
+        
+        // 캔버스 초기화
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // (A) 농구 코트 그리기 (반 코트)
+        drawCourt(ctx);
+
+        // (B) 슛 데이터 그리기
+        ZONES.forEach(z => {
+            // 시도가 없으면 그리지 않음
+            if(z.userA === 0) return;
+
+            // 색상 결정 로직 (+10% 초록, -10% 빨강, 그 외 노랑)
+            let color = "#f1c40f"; // Yellow
+            if (z.userPct >= z.nba + 10) color = "#2ecc71"; // Green
+            else if (z.userPct <= z.nba - 10) color = "#e74c3c"; // Red
+
+            // 원 그리기 (구역 위치)
+            ctx.beginPath();
+            ctx.arc(z.x, z.y, 25, 0, 2 * Math.PI); // 반지름 25
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#333";
+            ctx.stroke();
+
+            // 텍스트 (성공/시도)
+            ctx.fillStyle = "#000";
+            ctx.font = "bold 12px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(`${z.userM}/${z.userA}`, z.x, z.y - 3);
+            ctx.fillText(`${Math.round(z.userPct)}%`, z.x, z.y + 10);
+        });
+    }
+
+    function drawCourt(ctx) {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#555";
+
+        // 3점 라인 (단순화된 아치)
+        ctx.beginPath();
+        ctx.moveTo(30, 470); // 왼쪽 코너
+        ctx.lineTo(30, 330);
+        ctx.bezierCurveTo(30, 100, 470, 100, 470, 330); // 아치
+        ctx.lineTo(470, 470); // 오른쪽 코너
+        ctx.stroke();
+
+        // 페인트존 (Key)
+        ctx.strokeRect(170, 280, 160, 190);
+
+        // 제한구역 (골대 밑)
+        ctx.beginPath();
+        ctx.arc(250, 415, 30, Math.PI, 0); 
+        ctx.stroke();
+
+        // 골대 (Rim)
+        ctx.beginPath();
+        ctx.arc(250, 415, 6, 0, 2 * Math.PI);
+        ctx.strokeStyle = "orange";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        
+        // 백보드
+        ctx.beginPath();
+        ctx.moveTo(220, 425);
+        ctx.lineTo(280, 425);
+        ctx.strokeStyle = "#555";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+</script>
+
+</body>
+</html>
